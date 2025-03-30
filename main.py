@@ -1,10 +1,30 @@
-import os
 import subprocess
 
-import ffmpeg
 from loguru import logger
 from tqdm import tqdm
 import sys
+from pathlib import Path
+
+
+def get_ffmpeg_path():
+    """Определяет правильный путь к ffmpeg"""
+    # 1. Проверяем рядом с EXE (для PyInstaller)
+    ffmpeg_path = Path(sys.executable).parent / "ffmpeg.exe"
+    if ffmpeg_path.exists():
+        return str(ffmpeg_path)
+
+    # 2. Проверяем в папке скрипта
+    ffmpeg_path = Path(__file__).parent / "ffmpeg.exe"
+    if ffmpeg_path.exists():
+        return str(ffmpeg_path)
+
+    # 3. Проверяем в PATH системы
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        return "ffmpeg"
+    except:
+        logger.error("FFmpeg не найден! Положите ffmpeg.exe рядом с программой")
+        sys.exit(1)
 
 
 def convert_mts_mp4(base_dir, file, options=None):
@@ -13,41 +33,39 @@ def convert_mts_mp4(base_dir, file, options=None):
     :param file: path to mts file
     :return:
     """
-    OUTPUT_DIR = os.path.join(base_dir, 'converted')
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    output_dir = base_dir / 'converted'
+    output_dir.mkdir(parents=True, exist_ok=True)  # Создаем папку, если не существует
 
-    output_file_name = os.path.basename(file).split('.')[0] + ".mp4"
-    output_file = os.path.join(OUTPUT_DIR, output_file_name)
-    i = 1
-    while os.path.exists(output_file):
-        output_file_name = (os.path.basename(file).split('.')[0] +
-                            f"({str(i)})" +
-                            ".mp4")
-        output_file = os.path.join(OUTPUT_DIR, output_file_name)
-        i += 1
+    stem = file.stem
+    suffix = '.mp4'
+    output_file = output_dir / f"{stem}{suffix}"
 
-    if get_os() == 'windows':
-        ffmpeg_path = os.path.join(os.path.dirname(sys.executable),
-                                   '',
-                                   "ffmpeg.exe")
+    # Обработка случая, когда файл уже существует
+    counter = 1
+    while output_file.exists():
+        output_file = output_dir / f"{stem}({counter}){suffix}"
+        counter += 1
 
-        # Если ffmpeg.exe не рядом с EXE, ищем в папке скрипта
-        if not os.path.exists(ffmpeg_path):
-            ffmpeg_path = os.path.join(os.path.dirname(__file__), "ffmpeg.exe")
+
+    ffmpeg_path = get_ffmpeg_path()
+
 
     try:
+        subprocess.run([
+            ffmpeg_path,
+            '-i', str(file),
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+            '-y',  # Разрешить перезапись
+            str(output_file)
+        ], check=True, capture_output=True)
 
-        (
-            ffmpeg
-            .input(file)
-            .output(output_file,
-                    **{"c:v": "copy", "c:a": "copy"})  # Копируем видео и аудио
-            .run()
-        )
-        logger.info(f"Фаил {output_file_name} перекодирован")
-    except ffmpeg.Error as e:
+
+
+        logger.success(f"Фаил {output_file.name} перекодирован")
+    except subprocess.CalledProcessError as e:
         logger.error(e)
-        logger.error(f"Возникла ошибка при перекодированнии файла {output_file_name}")
+        logger.error(f"Возникла ошибка при перекодированнии файла {output_file.name}")
         sys.exit(1)
 
 
@@ -66,18 +84,14 @@ def find_MTS_files(path):
     :param path: str
     :return: list
     """
-    mts_files = []
-    for root, dirs, files in os.walk(path):
-        for file in files:
-            if file.lower().endswith('.mts'):
-                mts_files.append(os.path.join(root, file))
+    mts_files = list(path.rglob('*.mts')) + list(path.rglob('*.MTS'))
     if not mts_files:
-        raise FileNotFoundError("Ни однин фаил MTS не был найден в каталоге")
+        raise FileNotFoundError("Не найдено ни одного MTS файла в каталоге")
     return mts_files
 
 
 def main():
-    START_DIR = os.getcwd()
+    START_DIR = Path.cwd()
     if not get_os():
         raise SystemError("Программ предназначена для запуска в Windows")
 
@@ -88,6 +102,7 @@ def main():
         convert_mts_mp4(START_DIR, file)
 
     logger.info("Конверация закончена")
+    print("Нажми любую кнопку для завершения")
 
 
 if __name__ == '__main__':
